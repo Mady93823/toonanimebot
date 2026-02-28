@@ -1,0 +1,6 @@
+playwright
+requests
+yt-dlp
+pyrogram
+tgcrypto
+python-dotenv
