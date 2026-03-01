@@ -18,7 +18,19 @@
 - **Playwright Interception:** Automates a headless Chromium browser with stealth modes to bypass Cloudflare protection and fetch hidden HLS streams.
 - **2GB Upload Limits:** Powered by Pyrogram and Telegram's MTProto API to effortlessly upload files larger than the standard 50MB bot limit.
 - **Format Toggle:** Choose to upload the final file to the chat as a streaming **Video** or a raw **Document**.
-- **Admin Whitelist:** Secure `.env` configuration completely ignores messages from unauthorized users.
+- **Admin & Auth System:** Highly secure access control. Master Admins (defined via `.env`) can dynamically authorize or revoke secondary users directly via Telegram commands.
+
+---
+
+## 🛡️ Admin Authentication System
+
+The bot employs a dual-layer security model to ensure nobody can abuse your server resources to download episodes.
+
+1. **Master Admins:** Any Telegram user ID placed inside your `.env` file's `ALLOWED_ADMIN_IDS` variable is considered a Master Admin.
+2. **Dynamic Users:** Master Admins can securely authorize their friends or other channels to use the bot by sending commands directly to the bot chat:
+   - `/auth 12345678` — Grants the specified User ID full access to the bot.
+   - `/del 12345678` — Revokes their access immediately. 
+   *(All authorized user IDs are securely backed up in a local `authorized_users.json` file inside your bot directory).*
 
 ---
 
