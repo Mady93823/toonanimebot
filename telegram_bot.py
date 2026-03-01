@@ -117,9 +117,15 @@ async def handle_series_url(client, message):
         if "archive.toonworld4all.me/episode/" in href:
             if href not in seen_urls:
                 seen_urls.add(href)
-                # Try to extract the episode designation from the URL (e.g. 3x1)
-                match = re.search(r'/episode/(.+)$', href)
-                ep_name = match.group(1) if match else "Episode"
+                # Try to extract the episode designation from the URL (e.g. 3x1 or 12)
+                # The URLs usually look like: /episode/jujutsu-kaisen-3x1 or /episode/show-name-12
+                match = re.search(r'-(\d+x\d+|\d+)[^/]*$', href)
+                if match:
+                    ep_name = f"Ep {match.group(1)}"
+                else:
+                    # Fallback if no clean number found
+                    clean_slug = href.split('/')[-1] if not href.endswith('/') else href.split('/')[-2]
+                    ep_name = clean_slug[-10:] # get last 10 chars as fallback
                 
                 # Format strictly to keep callback data short
                 # For safety, Pyrogram callback_data is limited to 64 bytes. 
@@ -130,10 +136,11 @@ async def handle_series_url(client, message):
         return await processing_msg.edit_text("❌ Could not detect any direct 'archive' episode links on this page.")
 
     # Create session buffer for this user to hold the long URLs
-    if "episode_buffer" not in user_sessions.get(user_id, {}):
-        if user_id not in user_sessions:
-            user_sessions[user_id] = {}
-        user_sessions[user_id]["episode_buffer"] = {}
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {}
+    
+    # Always reset the episode buffer for a new scraped page
+    user_sessions[user_id]["episode_buffer"] = {}
 
     
     # Build inline keyboard list
@@ -144,12 +151,12 @@ async def handle_series_url(client, message):
         user_sessions[user_id]["episode_buffer"][ep_id] = href
         
         # Max label length is 15 chars so it looks good on mobile
-        label = ep_name[:15] + ".." if len(ep_name) > 15 else ep_name
+        label = ep_name[:15]
         
         row.append(InlineKeyboardButton(f"🎬 {label}", callback_data=f"selectep_{ep_id}"))
         
-        # 2 buttons per row
-        if len(row) == 2:
+        # 3 buttons per row looks better for short "Ep 1x1" labels
+        if len(row) == 3:
             keyboard_buttons.append(row)
             row = []
     
@@ -170,11 +177,14 @@ async def handle_episode_selection(client, callback_query):
     if user_id not in user_sessions or "episode_buffer" not in user_sessions[user_id]:
         return await callback_query.answer("Session expired. Please send the link again.", show_alert=True)
 
-    ep_id = callback_query.data.split("_")[1]
-    url = user_sessions[user_id]["episode_buffer"].get(f"ep_{ep_id}")
+    # Reconstruct the ep_id matching the buffer key
+    callback_id = callback_query.data.split("_")[1] # e.g. "0"
+    buffer_key = f"ep_{callback_id}" # "ep_0"
+    
+    url = user_sessions[user_id]["episode_buffer"].get(buffer_key)
     
     if not url:
-        return await callback_query.answer("Could not resolve episode link.", show_alert=True)
+        return await callback_query.answer("Could not resolve episode link. State lost.", show_alert=True)
         
     await callback_query.message.edit_text(f"🚀 Triggering standard download for:\n`{url}`")
     
