@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 import asyncio
 from dotenv import load_dotenv
 
@@ -34,7 +35,8 @@ app = Client(
     "toonworld_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    plugins=dict(root="plugins")
 )
 
 # In-memory session state storage to track user workflow choices
@@ -46,9 +48,25 @@ def make_progress_bar(percent, width=15):
     return "█" * filled + "▒" * (width - filled)
 
 def is_authorized(user_id):
+    # Check if user is a Master Admin (.env)
+    if ALLOWED_ADMINS and user_id in ALLOWED_ADMINS:
+        return True
+        
+    # Check if user is explicitly authorized via the /auth plugin command
+    try:
+        if os.path.exists("authorized_users.json"):
+            with open("authorized_users.json", "r") as f:
+                auth_users = json.load(f)
+                if user_id in auth_users:
+                    return True
+    except Exception as e:
+        print(f"Error reading authorized_users.json: {e}")
+        
+    # If no master admins are configured, default to strictly deny rather than open access
     if not ALLOWED_ADMINS:
-        return True # If no restriction is set, allow all (not recommended, but fallback)
-    return user_id in ALLOWED_ADMINS
+        print("Warning: No ALLOWED_ADMIN_IDS set. The bot is locked until an admin is configured in .env.")
+        
+    return False
 
 
 @app.on_message(filters.command("start"))

@@ -20,6 +20,9 @@ bot_downloads/
 *.session
 *.session-journal
 
+# Database
+authorized_users.json
+
 # VSCode or other editors
 .vscode/
 .idea/
