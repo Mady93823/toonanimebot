@@ -4,3 +4,4 @@ yt-dlp
 pyrogram
 tgcrypto
 python-dotenv
+beautifulsoup4
