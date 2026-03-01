@@ -41,9 +41,7 @@ app = Client(
     plugins=dict(root="plugins")
 )
 
-# In-memory session state storage to track user workflow choices
-# Format: { chat_id: { "url": str, "res": int or None, "langs": list, "ep_data": dict } }
-user_sessions = {}
+from shared_state import user_sessions, active_batches
 
 def make_progress_bar(percent, width=15):
     filled = int(width * percent // 100)
@@ -145,6 +143,10 @@ async def handle_series_url(client, message):
     
     # Build inline keyboard list
     keyboard_buttons = []
+    
+    # Add Download All button at the top
+    keyboard_buttons.append([InlineKeyboardButton("📥 Download All Episodes (Batch Mode)", callback_data="selectep_all")])
+    
     row = []
     for idx, (ep_name, href) in enumerate(episode_links):
         ep_id = f"ep_{idx}"
@@ -177,8 +179,39 @@ async def handle_episode_selection(client, callback_query):
     if user_id not in user_sessions or "episode_buffer" not in user_sessions[user_id]:
         return await callback_query.answer("Session expired. Please send the link again.", show_alert=True)
 
+    callback_id = callback_query.data.split("_")[1]
+    
+    # Handle Batch Mode
+    if callback_id == "all":
+        await callback_query.answer("Preparing batch queue...", show_alert=False)
+        urls = [href for key, href in user_sessions[user_id]["episode_buffer"].items()]
+        
+        processing_msg = await callback_query.message.edit_text("🔍 Fetching batch metadata from first episode...")
+        
+        try:
+            loop = asyncio.get_running_loop()
+            first_ep_data = await loop.run_in_executor(None, parse_episode_page, urls[0])
+        except Exception as e:
+            return await processing_msg.edit_text(f"❌ Failed to parse episodes for batch: {e}")
+            
+        user_sessions[user_id]["is_batch"] = True
+        user_sessions[user_id]["batch_urls"] = urls
+        user_sessions[user_id]["url"] = urls[0]
+        user_sessions[user_id]["ep_data"] = first_ep_data
+        
+        show_name = first_ep_data.get('metadata', {}).get('show', 'Series')
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🖥 1080p", callback_data="res_1080"),
+             InlineKeyboardButton("📱 720p", callback_data="res_720")],
+            [InlineKeyboardButton("📺 Best Available", callback_data="res_best")]
+        ])
+        
+        return await processing_msg.edit_text(
+            f"📥 **Batch Mode: {show_name} ({len(urls)} Episodes)**\n\nPlease select the maximum video resolution for the batch:",
+            reply_markup=keyboard
+        )
+
     # Reconstruct the ep_id matching the buffer key
-    callback_id = callback_query.data.split("_")[1] # e.g. "0"
     buffer_key = f"ep_{callback_id}" # "ep_0"
     
     url = user_sessions[user_id]["episode_buffer"].get(buffer_key)
@@ -336,6 +369,18 @@ async def handle_upload_selection(client, callback_query):
     session = user_sessions[user_id]
     session["upload_type"] = upload_type
     
+    if session.get("is_batch"):
+        await callback_query.message.edit_text("⏳ Queuing batch download in the background...")
+        task = asyncio.create_task(process_batch_queue(client, callback_query.message, session, user_id))
+        active_batches[user_id] = {
+            "task": task,
+            "current": 1,
+            "total": len(session["batch_urls"]),
+            "status": "Starting up..."
+        }
+        del user_sessions[user_id]
+        return
+        
     await callback_query.answer("Starting download process...")
     await process_download(client, callback_query.message, session)
     
@@ -358,6 +403,10 @@ async def process_download(client, message, session):
     season = meta.get("season", 0)
     episode = meta.get("episode", 0)
     base_title = f"{show}_S{str(season).zfill(2)}E{str(episode).zfill(2)}"
+    
+    is_batch_item = session.get("is_batch_item", False)
+    if is_batch_item:
+        base_title = f"Bat_{session['batch_idx']}of{session['batch_total']}_{base_title}"
 
     streams = ep_data.get("streams", [])
     stream_info = streams[0]
@@ -525,6 +574,53 @@ async def process_download(client, message, session):
                     pass
 
     await status_msg.edit_text("✅ **All processes completed successfully!**")
+
+
+async def process_batch_queue(client, original_msg, session, user_id):
+    urls = session["batch_urls"]
+    res = session["res"]
+    lang = session["lang"]
+    upload_type = session.get("upload_type", "document")
+    
+    for idx, target_url in enumerate(urls):
+        active_batches[user_id]["current"] = idx + 1
+        active_batches[user_id]["status"] = f"Gathering metadata for Episode {idx+1}/{len(urls)}..."
+        
+        try:
+            loop = asyncio.get_running_loop()
+            ep_data = await loop.run_in_executor(None, parse_episode_page, target_url)
+            
+            single_session = {
+                "url": target_url,
+                "ep_data": ep_data,
+                "res": res,
+                "lang": lang,
+                "upload_type": upload_type,
+                "is_batch_item": True,
+                "batch_idx": idx + 1,
+                "batch_total": len(urls)
+            }
+            
+            active_batches[user_id]["status"] = f"Downloading Episode {idx+1}/{len(urls)}..."
+            
+            new_msg = await original_msg.reply(f"🚀 **Batch {idx+1}/{len(urls)} initialized!**")
+            await process_download(client, new_msg, single_session)
+            
+        except asyncio.CancelledError:
+            await original_msg.reply("🛑 Batch download manually cancelled by admin.")
+            break
+        except Exception as e:
+            await original_msg.reply(f"⚠️ Error processing episode {idx+1}/{len(urls)}: {e}")
+            
+        if idx < len(urls) - 1:
+            active_batches[user_id]["status"] = f"Cooling down for 10 seconds..."
+            await original_msg.reply(f"✅ Episode {idx+1} finished.\n⏳ Sleeping 10 seconds to prevent Telegram/Cloudflare rate-limits...")
+            await asyncio.sleep(10)
+            
+    if user_id in active_batches:
+        del active_batches[user_id]
+        
+    await original_msg.reply("🎉 **Master Batch Queue Completed!**")
 
 
 if __name__ == "__main__":
