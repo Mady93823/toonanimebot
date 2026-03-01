@@ -403,10 +403,6 @@ async def process_download(client, message, session):
     season = meta.get("season", 0)
     episode = meta.get("episode", 0)
     base_title = f"{show}_S{str(season).zfill(2)}E{str(episode).zfill(2)}"
-    
-    is_batch_item = session.get("is_batch_item", False)
-    if is_batch_item:
-        base_title = f"Bat_{session['batch_idx']}of{session['batch_total']}_{base_title}"
 
     streams = ep_data.get("streams", [])
     stream_info = streams[0]
@@ -432,7 +428,13 @@ async def process_download(client, message, session):
     res_suffix = f"_{res}p" if res else ""
     title = base_title + res_suffix + lang_suffix
 
-    await status_msg.edit_text("⬇️ `Downloading and merging video/audio tracks...`\n*(Please wait, this may take several minutes)*")
+    # Prepare display title (for Telegram UI only, keeps physical filename clean)
+    display_title = title
+    is_batch_item = session.get("is_batch_item", False)
+    if is_batch_item:
+        display_title = f"[Batch {session['batch_idx']}/{session['batch_total']}] {title}"
+
+    await status_msg.edit_text(f"🚀 **Starting:** {display_title}\n\n⬇️ `Downloading and merging video/audio tracks...`\n*(Please wait, this may take several minutes)*")
 
     session["dl_progress_str"] = "⬇️ `Starting download...`"
     session["dl_finished"] = False
