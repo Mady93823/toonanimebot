@@ -153,7 +153,7 @@ async def handle_series_url(client, message):
         # Max label length is 15 chars so it looks good on mobile
         label = ep_name[:15]
         
-        row.append(InlineKeyboardButton(f"🎬 {label}", callback_data=f"selectep_{ep_id}"))
+        row.append(InlineKeyboardButton(f"🎬 {label}", callback_data=f"selectep_{idx}"))
         
         # 3 buttons per row looks better for short "Ep 1x1" labels
         if len(row) == 3:
