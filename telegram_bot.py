@@ -3,6 +3,8 @@ import re
 import time
 import json
 import asyncio
+import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from pyrogram import Client, filters
@@ -76,13 +78,128 @@ async def start_cmd(client, message):
     
     await message.reply(
         "👋 Welcome! I am your ToonWorld Anime Downloader bot.\n\n"
-        "Send me a link to any episode from `archive.toonworld4all.me` and I will download it for you.",
+        "Send me a link to any episode (`archive.toonworld4all.me/...`) OR a main series page (`toonworld4all.me/...`) and I will download it for you.",
         quote=True
     )
 
 
-@app.on_message(filters.text & filters.regex(r"archive\.toonworld4all\.me/episode/"))
-async def handle_url(client, message):
+# ---------------------------------------------------------
+# STATE 0: SERIES PAGE PARSING
+# ---------------------------------------------------------
+@app.on_message(filters.text & filters.regex(r"https?://toonworld4all\.me/(?!tag|category|page|about)(.+)"))
+async def handle_series_url(client, message):
+    user_id = message.from_user.id
+    if not is_authorized(user_id):
+        return await message.reply("⛔ Unauthorized.")
+
+    url = message.text.strip()
+    processing_msg = await message.reply("🔍 Scraping Series Page for episodes...", quote=True)
+
+    try:
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, lambda: requests.get(url, timeout=15))
+        response.raise_for_status()
+    except Exception as e:
+        return await processing_msg.edit_text(f"❌ Failed to parse series page: {e}")
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    # Find all anchor tags pointing to the archive episode domain
+    episode_links = []
+    
+    # We use a set to keep track of seen URLs to prevent duplicates
+    seen_urls = set()
+    
+    # The actual Watch/Download links are often styled uniquely, 
+    # but the most robust way is just scanning for the domain.
+    for a in soup.find_all('a', href=True):
+        href = a['href']
+        if "archive.toonworld4all.me/episode/" in href:
+            if href not in seen_urls:
+                seen_urls.add(href)
+                # Try to extract the episode designation from the URL (e.g. 3x1)
+                match = re.search(r'/episode/(.+)$', href)
+                ep_name = match.group(1) if match else "Episode"
+                
+                # Format strictly to keep callback data short
+                # For safety, Pyrogram callback_data is limited to 64 bytes. 
+                # We will store the URL in a session buffer based on its index.
+                episode_links.append((ep_name, href))
+
+    if not episode_links:
+        return await processing_msg.edit_text("❌ Could not detect any direct 'archive' episode links on this page.")
+
+    # Create session buffer for this user to hold the long URLs
+    if "episode_buffer" not in user_sessions.get(user_id, {}):
+        if user_id not in user_sessions:
+            user_sessions[user_id] = {}
+        user_sessions[user_id]["episode_buffer"] = {}
+
+    
+    # Build inline keyboard list
+    keyboard_buttons = []
+    row = []
+    for idx, (ep_name, href) in enumerate(episode_links):
+        ep_id = f"ep_{idx}"
+        user_sessions[user_id]["episode_buffer"][ep_id] = href
+        
+        # Max label length is 15 chars so it looks good on mobile
+        label = ep_name[:15] + ".." if len(ep_name) > 15 else ep_name
+        
+        row.append(InlineKeyboardButton(f"🎬 {label}", callback_data=f"selectep_{ep_id}"))
+        
+        # 2 buttons per row
+        if len(row) == 2:
+            keyboard_buttons.append(row)
+            row = []
+    
+    # Append any remaining buttons
+    if row:
+        keyboard_buttons.append(row)
+        
+    await processing_msg.edit_text(
+        f"✅ Found **{len(episode_links)}** Episodes.\n\nPlease select which episode to download:",
+        reply_markup=InlineKeyboardMarkup(keyboard_buttons)
+    )
+
+
+@app.on_callback_query(filters.regex(r"^selectep_"))
+async def handle_episode_selection(client, callback_query):
+    user_id = callback_query.from_user.id
+    
+    if user_id not in user_sessions or "episode_buffer" not in user_sessions[user_id]:
+        return await callback_query.answer("Session expired. Please send the link again.", show_alert=True)
+
+    ep_id = callback_query.data.split("_")[1]
+    url = user_sessions[user_id]["episode_buffer"].get(f"ep_{ep_id}")
+    
+    if not url:
+        return await callback_query.answer("Could not resolve episode link.", show_alert=True)
+        
+    await callback_query.message.edit_text(f"🚀 Triggering standard download for:\n`{url}`")
+    
+    # Synthetically call the normal handle_url function
+    # Create a mock message object
+    class MockMessage:
+        def __init__(self, uid, url_text, orig_msg):
+            self.from_user = type('User', (), {'id': uid})()
+            self.text = url_text
+            self.chat = orig_msg.chat
+            self.id = orig_msg.id
+            self.orig_msg = orig_msg
+            
+        async def reply(self, text, quote=False):
+            return await self.orig_msg.reply(text, quote=quote)
+            
+    mock_msg = MockMessage(user_id, url, callback_query.message)
+    await handle_archive_url(client, mock_msg)
+
+
+# ---------------------------------------------------------
+# STATE 1: ARCHIVE EPISODE RESOLUTION
+# ---------------------------------------------------------
+@app.on_message(filters.text & filters.regex(r"https?://archive\.toonworld4all\.me/episode/"))
+async def handle_archive_url(client, message):
     user_id = message.from_user.id
     if not is_authorized(user_id):
         return await message.reply("⛔ Unauthorized.")
