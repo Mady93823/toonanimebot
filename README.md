@@ -15,6 +15,7 @@
 
 - **Interactive UI:** Interactive Telegram inline keyboards to select the exact video resolution (`1080p`, `720p`).
 - **Multi-Audio Support:** Download individual audio tracks (Tamil, Hindi, Telugu, English, Japanese) or merge them all into a massive Multi-Audio MKV file!
+- **Series Page Scraping:** Send a main show URL (`toonworld4all.me/show-name/`) and the bot will instantly scrape the page, giving you an interactive keyboard menu to pick which exact episode you want to download!
 - **Playwright Interception:** Automates a headless Chromium browser with stealth modes to bypass Cloudflare protection and fetch hidden HLS streams.
 - **2GB Upload Limits:** Powered by Pyrogram and Telegram's MTProto API to effortlessly upload files larger than the standard 50MB bot limit.
 - **Format Toggle:** Choose to upload the final file to the chat as a streaming **Video** or a raw **Document**.
